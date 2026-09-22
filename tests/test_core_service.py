@@ -1,5 +1,4 @@
 import unittest
-from datetime import datetime, timezone
 from unittest.mock import Mock
 
 from models.record import ApplePackageRecord
@@ -152,11 +151,9 @@ class CoreServiceUpdateTests(unittest.TestCase):
     def test_mark_approved_updates_review_and_app_without_release_result_or_submitted_at(self):
         self.session.post.return_value = success_response({"reviewRecordId": 202, "appEntityId": 20})
 
-        approved_at = datetime(2026, 9, 3, 12, 30, tzinfo=timezone.utc)
         result = self.service.mark_approved(
             review_record_id=202,
             app_entity_id=20,
-            approved_at=approved_at,
         )
 
         self.assertTrue(result)
@@ -166,7 +163,7 @@ class CoreServiceUpdateTests(unittest.TestCase):
         )
         review_payload = self.session.post.call_args.kwargs["json"]
         self.assertEqual(
-            {"reviewRecordId": 202, "appEntityId": 20, "approvedAt": "2026-09-03T12:30:00+00:00"},
+            {"reviewRecordId": 202, "appEntityId": 20},
             review_payload,
         )
         self.assertNotIn("releaseResult", review_payload)
@@ -180,7 +177,6 @@ class CoreServiceUpdateTests(unittest.TestCase):
         result = self.service.mark_approved(
             review_record_id=202,
             app_entity_id=20,
-            approved_at=datetime(2026, 9, 3, 12, 30, tzinfo=timezone.utc),
         )
 
         self.assertFalse(result)

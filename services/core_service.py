@@ -5,7 +5,6 @@ core-service HTTP 适配层
 """
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -253,15 +252,10 @@ class CoreServiceClient:
             raise CoreServiceError(f"监控接口字段 {field_name} 格式不正确")
         return [item for item in value if isinstance(item, dict)]
 
-    @staticmethod
-    def _format_datetime(value: datetime) -> str:
-        return value.isoformat()
-
     def mark_approved(
         self,
         review_record_id: int,
         app_entity_id: int,
-        approved_at: datetime,
     ) -> bool:
         """
         标记审核记录过审，并同步 App 主档状态。
@@ -275,7 +269,6 @@ class CoreServiceClient:
                 {
                     "reviewRecordId": int(review_record_id),
                     "appEntityId": int(app_entity_id),
-                    "approvedAt": self._format_datetime(approved_at),
                 },
             )
         except (CoreServiceError, TypeError, ValueError) as exc:

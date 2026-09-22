@@ -135,7 +135,7 @@ if settings.validate():
 GitHub 只访问 AppMgr 的专用监控接口，core-service 保持在 AppMgr 内部访问：
 
 - `POST /api/monitor/v1/reviews/query`：按 `teamName` 查询监控所需的 App、当前审核记录和提审中的记录
-- `POST /api/monitor/v1/reviews/approve`：按固定字段更新过审状态
+- `POST /api/monitor/v1/reviews/approve`：请求体只需 `{ "reviewRecordId": 123, "appEntityId": 456 }`，`approvedAt` 由 AppMgr 自动生成并更新过审状态
 
 查询请求体为 `{ "teamName": "静界" }`，使用 `x-monitor-api-key` 认证。`APPMGR_MONITOR_TEAM_NAME` 必须与 core-service 的团队名称完全一致。首次接入时监控端的 `ENABLE_STATUS_UPDATE` 应为 `false`，确认查询结果后再开启过审写入。API key 只应配置在部署环境变量或 GitHub Actions Secrets 中，不要提交到代码仓库。
 

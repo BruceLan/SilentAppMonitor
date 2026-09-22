@@ -138,8 +138,7 @@ class AppleMonitor:
         log_group("🍎 步骤 3: 查询 Apple Store 状态并更新")
         log_info(f"只处理 Apple 监控候选（共 {len(monitor_candidates)} 个）")
 
-        current_datetime = datetime.now().astimezone()
-        current_timestamp = int(current_datetime.timestamp() * 1000)
+        current_timestamp = int(datetime.now().astimezone().timestamp() * 1000)
         success_count = 0
         waiting_count = 0
         query_failed_count = 0
@@ -194,7 +193,6 @@ class AppleMonitor:
                 status_updated = self.core_service.mark_approved(
                     review_record_id=candidate.review_record_id,
                     app_entity_id=candidate.app_entity_id,
-                    approved_at=current_datetime,
                 )
                 if not status_updated:
                     log_warning("  AppMgr 状态更新失败，跳过飞书通知")
