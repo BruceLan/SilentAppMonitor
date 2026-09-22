@@ -34,13 +34,13 @@ jobs:
         env:
           FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
           FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
-          APPMGR_MONITOR_URL: ${{ vars.APPMGR_MONITOR_URL }}
+          APPMGR_MONITOR_URL: ${{ secrets.APPMGR_MONITOR_URL }}
           APPMGR_MONITOR_API_KEY: ${{ secrets.APPMGR_MONITOR_API_KEY }}
-          APPMGR_MONITOR_TEAM_NAME: ${{ vars.APPMGR_MONITOR_TEAM_NAME }}
+          APPMGR_MONITOR_TEAM_NAME: ${{ secrets.APPMGR_MONITOR_TEAM_NAME }}
           FEISHU_CHAT_ID_ALL: ${{ secrets.FEISHU_CHAT_ID_ALL }}
           FEISHU_CHAT_ID_TEAM: ${{ secrets.FEISHU_CHAT_ID_TEAM }}
           FEISHU_MENTION_USERS: ${{ secrets.FEISHU_MENTION_USERS }}
-          ENABLE_STATUS_UPDATE: ${{ vars.ENABLE_STATUS_UPDATE }}
+          ENABLE_STATUS_UPDATE: ${{ secrets.ENABLE_STATUS_UPDATE }}
         run: |
           python monitor_apple.py
       

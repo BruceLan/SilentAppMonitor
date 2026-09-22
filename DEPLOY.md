@@ -45,9 +45,9 @@ git push -u origin main
 |------------|------|---------|
 | `FEISHU_APP_ID` | 飞书应用 ID | 飞书开放平台 -> 应用详情 |
 | `FEISHU_APP_SECRET` | 飞书应用密钥 | 飞书开放平台 -> 应用详情 |
-| `APPMGR_MONITOR_URL` | AppMgr 监控接口地址（建议 HTTPS） | 由 AppMgr 部署方提供，建议放 Actions Variables |
+| `APPMGR_MONITOR_URL` | AppMgr 监控接口地址（建议 HTTPS） | 由 AppMgr 部署方提供，放 Actions Secrets |
 | `APPMGR_MONITOR_API_KEY` | AppMgr 监控接口 Key | 由 AppMgr 部署方提供，放 Actions Secrets |
-| `APPMGR_MONITOR_TEAM_NAME` | 本次监控所属团队名称，同时作为飞书消息前缀 | 例如 `静界`，放 Actions Variables |
+| `APPMGR_MONITOR_TEAM_NAME` | 本次监控所属团队名称，同时作为飞书消息前缀 | 例如 `静界`，放 Actions Secrets |
 
 **注意：** GitHub Actions 默认为生产环境（`ENV=production`），无需配置 `ENV`。
 
@@ -61,9 +61,9 @@ git push -u origin main
 
 #### 可选配置（监控写入）
 
-| Variable 名称 | 说明 | 示例值 |
+| Secret 名称 | 说明 | 示例值 |
 |--------------|------|--------|
-| `ENABLE_STATUS_UPDATE` | 是否允许自动写入过审状态；首次测试设为 `false` | `false` |
+| `ENABLE_STATUS_UPDATE` | 是否允许自动写入过审状态；正式运行设为 `true` | `true` |
 
 ### 步骤 3：启用 GitHub Actions
 
@@ -118,13 +118,13 @@ jobs:
         env:
           FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
           FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
-          APPMGR_MONITOR_URL: ${{ vars.APPMGR_MONITOR_URL }}
+          APPMGR_MONITOR_URL: ${{ secrets.APPMGR_MONITOR_URL }}
           APPMGR_MONITOR_API_KEY: ${{ secrets.APPMGR_MONITOR_API_KEY }}
-          APPMGR_MONITOR_TEAM_NAME: ${{ vars.APPMGR_MONITOR_TEAM_NAME }}
+          APPMGR_MONITOR_TEAM_NAME: ${{ secrets.APPMGR_MONITOR_TEAM_NAME }}
           FEISHU_CHAT_ID_ALL: ${{ secrets.FEISHU_CHAT_ID_ALL }}
           FEISHU_CHAT_ID_TEAM: ${{ secrets.FEISHU_CHAT_ID_TEAM }}
           FEISHU_MENTION_USERS: ${{ secrets.FEISHU_MENTION_USERS }}
-          ENABLE_STATUS_UPDATE: ${{ vars.ENABLE_STATUS_UPDATE }}
+          ENABLE_STATUS_UPDATE: ${{ secrets.ENABLE_STATUS_UPDATE }}
 ```
 
 ### 修改执行频率
