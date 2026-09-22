@@ -45,7 +45,9 @@ git push -u origin main
 |------------|------|---------|
 | `FEISHU_APP_ID` | 飞书应用 ID | 飞书开放平台 -> 应用详情 |
 | `FEISHU_APP_SECRET` | 飞书应用密钥 | 飞书开放平台 -> 应用详情 |
-| `FEISHU_WIKI_URL` | 飞书多维表格 URL | 复制多维表格的完整 URL |
+| `APPMGR_MONITOR_URL` | AppMgr 监控接口地址（建议 HTTPS） | 由 AppMgr 部署方提供，建议放 Actions Variables |
+| `APPMGR_MONITOR_API_KEY` | AppMgr 监控接口 Key | 由 AppMgr 部署方提供，放 Actions Secrets |
+| `APPMGR_MONITOR_TEAM_NAME` | 本次监控所属团队名称，同时作为飞书消息前缀 | 例如 `静界`，放 Actions Variables |
 
 **注意：** GitHub Actions 默认为生产环境（`ENV=production`），无需配置 `ENV`。
 
@@ -56,6 +58,12 @@ git push -u origin main
 | `FEISHU_CHAT_ID_ALL` | @所有人的群聊 ID | `oc_xxx` |
 | `FEISHU_CHAT_ID_TEAM` | @指定用户的群聊 ID | `oc_yyy` |
 | `FEISHU_MENTION_USERS` | 要 @ 的用户 ID（逗号分隔） | `ou_aaa,ou_bbb` |
+
+#### 可选配置（监控写入）
+
+| Variable 名称 | 说明 | 示例值 |
+|--------------|------|--------|
+| `ENABLE_STATUS_UPDATE` | 是否允许自动写入过审状态；首次测试设为 `false` | `false` |
 
 ### 步骤 3：启用 GitHub Actions
 
@@ -79,7 +87,7 @@ git push -u origin main
 3. 点击 **"monitor"** 查看详细日志
 4. 日志会显示：
    - 数据读取情况
-   - 数据验证结果
+   - 监控候选和 Apple 查询结果
    - Apple Store 查询结果
    - 飞书通知发送情况
 
@@ -110,10 +118,13 @@ jobs:
         env:
           FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
           FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
-          FEISHU_WIKI_URL: ${{ secrets.FEISHU_WIKI_URL }}
+          APPMGR_MONITOR_URL: ${{ vars.APPMGR_MONITOR_URL }}
+          APPMGR_MONITOR_API_KEY: ${{ secrets.APPMGR_MONITOR_API_KEY }}
+          APPMGR_MONITOR_TEAM_NAME: ${{ vars.APPMGR_MONITOR_TEAM_NAME }}
           FEISHU_CHAT_ID_ALL: ${{ secrets.FEISHU_CHAT_ID_ALL }}
           FEISHU_CHAT_ID_TEAM: ${{ secrets.FEISHU_CHAT_ID_TEAM }}
           FEISHU_MENTION_USERS: ${{ secrets.FEISHU_MENTION_USERS }}
+          ENABLE_STATUS_UPDATE: ${{ vars.ENABLE_STATUS_UPDATE }}
 ```
 
 ### 修改执行频率
@@ -165,7 +176,10 @@ pip install -r requirements.txt
 ```bash
 export FEISHU_APP_ID="your_app_id"
 export FEISHU_APP_SECRET="your_app_secret"
-export FEISHU_WIKI_URL="your_wiki_url"
+export APPMGR_MONITOR_URL="https://appmgr.example.com"
+export APPMGR_MONITOR_API_KEY="your_monitor_api_key"
+export APPMGR_MONITOR_TEAM_NAME="静界"
+export ENABLE_STATUS_UPDATE="false"
 export FEISHU_CHAT_ID_ALL="oc_xxx"
 export FEISHU_CHAT_ID_TEAM="oc_yyy"
 export FEISHU_MENTION_USERS="ou_aaa,ou_bbb"
@@ -213,7 +227,10 @@ docker build -t apple-monitor .
 docker run -d \
   -e FEISHU_APP_ID="your_app_id" \
   -e FEISHU_APP_SECRET="your_app_secret" \
-  -e FEISHU_WIKI_URL="your_wiki_url" \
+  -e APPMGR_MONITOR_URL="https://appmgr.example.com" \
+  -e APPMGR_MONITOR_API_KEY="your_monitor_api_key" \
+  -e APPMGR_MONITOR_TEAM_NAME="静界" \
+  -e ENABLE_STATUS_UPDATE="false" \
   -e FEISHU_CHAT_ID_ALL="oc_xxx" \
   -e FEISHU_CHAT_ID_TEAM="oc_yyy" \
   -e FEISHU_MENTION_USERS="ou_aaa,ou_bbb" \
@@ -305,9 +322,9 @@ if len(invalid_records) > 5:
 - 版本号匹配逻辑问题
 
 **解决方案：**
-1. 检查表格更新是否成功
+1. 检查 AppMgr 状态更新是否成功
 2. 查看日志中的版本号比较结果
-3. 确认数据验证逻辑
+3. 确认 Apple Store 返回的版本号是否匹配
 
 ## 成本估算
 

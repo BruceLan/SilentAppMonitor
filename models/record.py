@@ -1,6 +1,6 @@
 """
-飞书多维表格数据模型
-用于映射和存储从飞书多维表格读取的记录数据
+审核记录数据模型
+用于存储 App 主档和提审记录的统一监控字段
 """
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -307,41 +307,9 @@ class ApplePackageRecord:
             return datetime.fromtimestamp(self.approval_time / 1000)
         return None
 
-    def get_submitting_children(self) -> List["ApplePackageRecord"]:
-        """返回提审中的子记录"""
-        return [child for child in self.children if child.package_status == "提审中"]
-
-    def has_multiple_submitting_children(self) -> bool:
-        """是否存在多条提审中的子记录"""
-        return len(self.get_submitting_children()) > 1
-
     def is_in_review_scope(self) -> bool:
         """是否属于本次审核中的记录范围"""
         return self.package_status == "提审中"
-
-    def resolve_current_submission_record(self) -> Optional["ApplePackageRecord"]:
-        """
-        返回当前要关注的发包流水
-
-        - 单记录模式：记录本身处于提审中时返回自身
-        - 父子模式：从提审中的子记录中，按提审时间倒序、版本号倒序选择最新一条
-        """
-        if not self.children:
-            return self if self.package_status == "提审中" else None
-
-        candidates = self.get_submitting_children()
-        if not candidates:
-            return None
-
-        return sorted(
-            candidates,
-            key=lambda record: (
-                record.submission_time or 0,
-                self._safe_version(record.version),
-                record.record_id or "",
-            ),
-            reverse=True,
-        )[0]
 
     def resolve_monitor_apple_id(self, parent_record: Optional["ApplePackageRecord"] = None) -> Optional[str]:
         """返回用于 Apple 监控的 Apple ID，优先取当前记录，缺失时回退主记录"""
@@ -350,65 +318,3 @@ class ApplePackageRecord:
     def should_monitor_online(self) -> bool:
         """是否需要做 Apple 上线监控"""
         return self.stage != "五图"
-
-    def review_parent_snapshot(
-        self, current_record: Optional["ApplePackageRecord"] = None
-    ) -> Dict[str, Any]:
-        """审查父记录快照"""
-        errors = []
-
-        if self.submission_time:
-            errors.append("父记录不应填写提审时间")
-        if not self.package_status:
-            errors.append("父记录缺少包状态")
-        if not self.stage:
-            errors.append("父记录缺少阶段")
-        if current_record and self.package_status and self.package_status != current_record.package_status:
-            errors.append("父记录包状态未同步最新状态")
-        if current_record and self.stage and self.stage != current_record.stage:
-            errors.append("父记录阶段未同步最新阶段")
-
-        return {"is_valid": len(errors) == 0, "errors": errors}
-
-    def review_current_submission(self) -> Dict[str, Any]:
-        """审查当前发包流水"""
-        errors = []
-
-        if not self.submission_time:
-            errors.append("缺少提审时间")
-        if self.should_monitor_online() and not self.version:
-            errors.append("缺少版本号")
-
-        return {"is_valid": len(errors) == 0, "errors": errors}
-
-    def get_latest_version(self) -> Optional[str]:
-        """
-        兼容旧接口：优先返回当前发包流水的版本号
-        """
-        if not self.is_in_review_scope():
-            return None
-
-        current_record = self.resolve_current_submission_record()
-        if current_record and current_record.version:
-            return current_record.version
-        return self.version
-
-    def validate_data(self) -> Dict[str, Any]:
-        """
-        兼容旧接口：审查当前发包流水
-        """
-        if not self.is_in_review_scope():
-            return {"is_valid": True, "errors": []}
-
-        current_record = self.resolve_current_submission_record()
-        if self.children and not current_record:
-            errors = []
-            parent_review = self.review_parent_snapshot()
-            if not parent_review["is_valid"]:
-                errors.extend(parent_review["errors"])
-            errors.append("父记录为提审中，但没有提审中的子记录")
-            return {"is_valid": False, "errors": errors}
-
-        if not current_record:
-            return {"is_valid": True, "errors": []}
-        return current_record.review_current_submission()

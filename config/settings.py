@@ -16,13 +16,13 @@ class Settings:
         # 环境标识：local（本地调试）或 production（生产环境）
         self.ENV = os.getenv("ENV", "production")
 
-        # 飞书应用配置
+        # 飞书应用配置（仅用于群通知）
         self.FEISHU_APP_ID = os.getenv("FEISHU_APP_ID")
         self.FEISHU_APP_SECRET = os.getenv("FEISHU_APP_SECRET")
-        self.FEISHU_WIKI_URL = os.getenv("FEISHU_WIKI_URL")
-        self.AD_DELIVERY_WIKI_URL = os.getenv("AD_DELIVERY_WIKI_URL")
-        self.FEISHU_MESSAGE_PREFIX = os.getenv("FEISHU_MESSAGE_PREFIX", "").strip()
-        self.ENABLE_RECORD_REVIEW = self._get_bool_env("ENABLE_RECORD_REVIEW", False)
+        self.APPMGR_MONITOR_URL = os.getenv("APPMGR_MONITOR_URL")
+        self.APPMGR_MONITOR_API_KEY = os.getenv("APPMGR_MONITOR_API_KEY")
+        self.APPMGR_MONITOR_TEAM_NAME = os.getenv("APPMGR_MONITOR_TEAM_NAME", "").strip()
+        self.ENABLE_STATUS_UPDATE = self._get_bool_env("ENABLE_STATUS_UPDATE", False)
 
         # 飞书通知配置
         self.FEISHU_NOTIFICATIONS = self._load_notifications()
@@ -81,7 +81,11 @@ class Settings:
             return False
         if not self.FEISHU_APP_SECRET:
             return False
-        if not self.FEISHU_WIKI_URL:
+        if not self.APPMGR_MONITOR_URL:
+            return False
+        if not self.APPMGR_MONITOR_API_KEY:
+            return False
+        if not self.APPMGR_MONITOR_TEAM_NAME:
             return False
         return True
 

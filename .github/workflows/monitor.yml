@@ -8,6 +8,10 @@ on:
   # 支持手动触发
   workflow_dispatch:
 
+concurrency:
+  group: apple-monitor
+  cancel-in-progress: false
+
 jobs:
   monitor:
     runs-on: ubuntu-latest
@@ -30,13 +34,13 @@ jobs:
         env:
           FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
           FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
-          FEISHU_WIKI_URL: ${{ secrets.FEISHU_WIKI_URL }}
-          AD_DELIVERY_WIKI_URL: ${{ secrets.AD_DELIVERY_WIKI_URL }}
+          APPMGR_MONITOR_URL: ${{ vars.APPMGR_MONITOR_URL }}
+          APPMGR_MONITOR_API_KEY: ${{ secrets.APPMGR_MONITOR_API_KEY }}
+          APPMGR_MONITOR_TEAM_NAME: ${{ vars.APPMGR_MONITOR_TEAM_NAME }}
           FEISHU_CHAT_ID_ALL: ${{ secrets.FEISHU_CHAT_ID_ALL }}
           FEISHU_CHAT_ID_TEAM: ${{ secrets.FEISHU_CHAT_ID_TEAM }}
           FEISHU_MENTION_USERS: ${{ secrets.FEISHU_MENTION_USERS }}
-          FEISHU_MESSAGE_PREFIX: ${{ secrets.FEISHU_MESSAGE_PREFIX }}
-          ENABLE_RECORD_REVIEW: ${{ secrets.ENABLE_RECORD_REVIEW }}
+          ENABLE_STATUS_UPDATE: ${{ vars.ENABLE_STATUS_UPDATE }}
         run: |
           python monitor_apple.py
       

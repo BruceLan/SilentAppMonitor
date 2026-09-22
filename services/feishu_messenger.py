@@ -3,10 +3,9 @@
 """
 import lark_oapi as lark
 from lark_oapi.api.im.v1 import CreateMessageRequest, CreateMessageRequestBody
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any
 import json
 import uuid
-from models.record import ApplePackageRecord
 from utils.logger import log_info, log_warning, log_success, log_error
 
 
@@ -195,96 +194,3 @@ class FeishuMessenger:
                 mention_all=mention_all,
                 mention_user_ids=mention_user_ids
             )
-    
-    def send_warning_message(
-        self,
-        chat_id: str,
-        invalid_records: List[Tuple[ApplePackageRecord, List[str]]]
-    ) -> bool:
-        """
-        发送项目管理记录审查告警到飞书群聊
-        
-        Args:
-            chat_id: 飞书群聊 ID
-            invalid_records: 异常记录列表，每个元素是 (record, errors) 元组
-        
-        Returns:
-            发送是否成功
-        """
-        if not chat_id or not invalid_records:
-            return False
-        
-        try:
-            # 构建警告消息内容
-            warning_lines = [
-                "⚠️ 项目管理记录审查告警",
-                "",
-                f"发现 {len(invalid_records)} 条记录需要处理，请及时修正：",
-                "",
-                "说明：父记录快照字段（阶段/包状态）会自动同步，父记录提审时间会自动清空。",
-                ""
-            ]
-            
-            for idx, (record, errors) in enumerate(invalid_records, 1):
-                warning_lines.append(f"{idx}. {record.package_name}")
-                for error in errors:
-                    warning_lines.append(f"   - {error}")
-                if record.record_id:
-                    warning_lines.append(f"   - 记录ID: {record.record_id}")
-                warning_lines.append("")
-            
-            warning_lines.append("请相关研发人员检查并修正记录。")
-            
-            message_text = self._apply_prefix("\n".join(warning_lines))
-            
-            # 构建富文本消息内容（@ 所有人）
-            content_parts = [
-                {
-                    "tag": "at",
-                    "user_id": "all"
-                },
-                {
-                    "tag": "text",
-                    "text": " \n" + message_text
-                }
-            ]
-            
-            # 构建消息内容
-            content = json.dumps({
-                "zh_cn": {
-                    "title": "",
-                    "content": [content_parts]
-                }
-            }, ensure_ascii=False)
-            
-            # 生成唯一的 UUID
-            message_uuid = str(uuid.uuid4())
-            
-            # 构建请求
-            request = CreateMessageRequest.builder() \
-                .receive_id_type("chat_id") \
-                .request_body(
-                    CreateMessageRequestBody.builder()
-                    .receive_id(chat_id)
-                    .msg_type("post")
-                    .content(content)
-                    .uuid(message_uuid)
-                    .build()
-                ) \
-                .build()
-            
-            # 发送消息
-            response = self.client.im.v1.message.create(request)
-            
-            if response.success():
-                log_info("项目管理记录审查告警发送成功 (@所有人)")
-                return True
-            else:
-                log_error("项目管理记录审查告警发送失败")
-                log_info(f"  错误码: {response.code}")
-                log_info(f"  错误信息: {response.msg}")
-                return False
-                
-        except Exception as e:
-            log_error(f"发送项目管理记录审查告警异常: {str(e)}")
-            return False

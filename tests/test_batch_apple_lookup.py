@@ -3,10 +3,10 @@ from requests.exceptions import Timeout
 from unittest.mock import Mock, patch
 
 import monitor_apple
-from models.delivery import ApprovedDeliveryItem
 from models.record import ApplePackageRecord
 from monitor_apple import AppleMonitor
 from services.apple_service import AppleLookupResult, AppleStoreService
+from services.core_service import CoreReviewGroup
 
 
 class FakeResponse:
@@ -193,100 +193,29 @@ class AppleStoreServiceBatchLookupTests(unittest.TestCase):
 
 
 class AppleMonitorBatchLookupTests(unittest.TestCase):
-    @patch("monitor_apple.parse_wiki_url", return_value=("wiki-token", "table-id", "view-id"))
-    def test_run_syncs_ad_delivery_only_for_successfully_online_candidates(self, _mock_parse):
-        record_online = ApplePackageRecord(
-            record_id="record-online",
-            package_name="Demo App A",
-            package_status="提审中",
-            version="1.2.3",
-            stage="A1+A2+H5+五图",
-            apple_id="123",
-            production_package_name="com.demo.app",
-            team="极光",
-        )
-        record_waiting = ApplePackageRecord(
-            record_id="record-waiting",
-            package_name="Demo App B",
-            package_status="提审中",
-            version="9.9.9",
-            stage="A1+A2+H5+五图",
-            apple_id="456",
-            production_package_name="com.demo.app.waiting",
-            team="极光",
+    @staticmethod
+    def _root_group(record: ApplePackageRecord, app_entity_id: int) -> CoreReviewGroup:
+        return CoreReviewGroup(
+            app_entity_id=app_entity_id,
+            parent_record=record,
+            current_record=record,
+            submitting_children=[],
+            has_children=False,
         )
 
-        feishu_service = Mock()
-        feishu_service.get_app_token_from_wiki.return_value = "app-token"
-        feishu_service.get_grouped_records.return_value = [record_online, record_waiting]
-        feishu_service.update_record_fields.return_value = True
-
-        feishu_messenger = Mock()
-        delivery_sync_service = Mock()
-
-        apple_service = Mock()
-        apple_service.query_app_statuses_with_meta.return_value = AppleLookupResult(
-            status_by_apple_id={
-                "123": {
-                    "is_online": True,
-                    "version": "1.2.3",
-                    "track_name": "Demo App A",
-                    "release_date": "2026-04-29T00:00:00Z",
-                    "current_version_release_date": "2026-04-29T00:00:00Z",
-                    "bundle_id": "com.demo.app",
-                    "track_view_url": "https://apps.apple.com/app/id123",
-                },
-                "456": {
-                    "is_online": True,
-                    "version": "1.0.0",
-                    "track_name": "Demo App B",
-                    "release_date": "2026-04-29T00:00:00Z",
-                    "current_version_release_date": "2026-04-29T00:00:00Z",
-                    "bundle_id": "com.demo.app.waiting",
-                    "track_view_url": "https://apps.apple.com/app/id456",
-                },
-            },
+    @staticmethod
+    def _lookup_result(status_by_apple_id):
+        return AppleLookupResult(
+            status_by_apple_id=status_by_apple_id,
             failed_apple_ids=[],
             total_batches=1,
             successful_batches=1,
             failed_batches=0,
         )
 
-        monitor = AppleMonitor(
-            feishu_service=feishu_service,
-            feishu_messenger=feishu_messenger,
-            apple_service=apple_service,
-            delivery_sync_service=delivery_sync_service,
-        )
-
-        with patch.object(monitor_apple.settings, "validate", return_value=True), patch.object(
-            monitor_apple.settings, "FEISHU_WIKI_URL", "https://example.com/wiki"
-        ), patch.object(monitor_apple.settings, "FEISHU_NOTIFICATIONS", []), patch.object(
-            monitor_apple.settings, "ENABLE_RECORD_REVIEW", True
-        ), patch.object(
-            monitor_apple.settings, "AD_DELIVERY_WIKI_URL", "https://example.com/delivery"
-        ):
-            monitor.run()
-
-        apple_service.query_app_statuses_with_meta.assert_called_once_with(["123", "456"], verbose=False)
-        feishu_service.test_connection.assert_not_called()
-        delivery_sync_service.sync_delivery_records.assert_called_once()
-        delivery_items, delivery_url = delivery_sync_service.sync_delivery_records.call_args.args
-        self.assertEqual("https://example.com/delivery", delivery_url)
-        self.assertEqual(1, len(delivery_items))
-        self.assertIsInstance(delivery_items[0], ApprovedDeliveryItem)
-        self.assertEqual(record_online, delivery_items[0].current_record)
-        self.assertEqual(record_online, delivery_items[0].parent_record)
-        self.assertEqual("123", delivery_items[0].apple_id)
-        self.assertEqual(
-            "https://apps.apple.com/app/id123",
-            delivery_items[0].app_status["track_view_url"],
-        )
-
-    @patch("monitor_apple.parse_wiki_url", return_value=("wiki-token", "table-id", "view-id"))
-    def test_run_uses_bulk_lookup_and_updates_only_matching_duplicate_apple_id(self, _mock_parse):
+    def test_run_uses_bulk_lookup_and_updates_only_matching_duplicate_apple_id(self):
         record_online = ApplePackageRecord(
-            record_id="record-online",
+            record_id="101",
             package_name="Demo App A",
             package_status="提审中",
             version="1.2.3",
@@ -294,7 +223,7 @@ class AppleMonitorBatchLookupTests(unittest.TestCase):
             apple_id="123",
         )
         record_waiting = ApplePackageRecord(
-            record_id="record-waiting",
+            record_id="102",
             package_name="Demo App B",
             package_status="提审中",
             version="9.9.9",
@@ -302,16 +231,18 @@ class AppleMonitorBatchLookupTests(unittest.TestCase):
             apple_id="123",
         )
 
-        feishu_service = Mock()
-        feishu_service.get_app_token_from_wiki.return_value = "app-token"
-        feishu_service.get_grouped_records.return_value = [record_online, record_waiting]
-        feishu_service.update_record_fields.return_value = True
+        core_service = Mock()
+        core_service.get_review_groups.return_value = [
+            self._root_group(record_online, 1),
+            self._root_group(record_waiting, 2),
+        ]
+        core_service.mark_approved.return_value = True
 
         feishu_messenger = Mock()
 
         apple_service = Mock()
-        apple_service.query_app_statuses_with_meta.return_value = AppleLookupResult(
-            status_by_apple_id={
+        apple_service.query_app_statuses_with_meta.return_value = self._lookup_result(
+            {
                 "123": {
                     "is_online": True,
                     "version": "1.2.3",
@@ -321,38 +252,33 @@ class AppleMonitorBatchLookupTests(unittest.TestCase):
                     "bundle_id": "com.demo.app",
                     "track_view_url": "https://apps.apple.com/app/id123",
                 }
-            },
-            failed_apple_ids=[],
-            total_batches=1,
-            successful_batches=1,
-            failed_batches=0,
+            }
         )
 
         monitor = AppleMonitor(
-            feishu_service=feishu_service,
+            core_service=core_service,
             feishu_messenger=feishu_messenger,
             apple_service=apple_service,
         )
 
         with patch.object(monitor_apple.settings, "validate", return_value=True), patch.object(
-            monitor_apple.settings, "FEISHU_WIKI_URL", "https://example.com/wiki"
-        ), patch.object(monitor_apple.settings, "FEISHU_NOTIFICATIONS", []), patch.object(
-            monitor_apple.settings, "ENABLE_RECORD_REVIEW", False
+            monitor_apple.settings, "FEISHU_NOTIFICATIONS", []
+        ), patch.object(
+            monitor_apple.settings, "ENABLE_STATUS_UPDATE", True
         ):
             monitor.run()
 
         apple_service.query_app_statuses_with_meta.assert_called_once_with(["123", "123"], verbose=False)
-        feishu_service.test_connection.assert_not_called()
-        feishu_service.update_record_fields.assert_called_once()
-        update_kwargs = feishu_service.update_record_fields.call_args.kwargs
-        self.assertEqual("record-online", update_kwargs["record_id"])
+        core_service.mark_approved.assert_called_once()
+        update_kwargs = core_service.mark_approved.call_args.kwargs
+        self.assertEqual(101, update_kwargs["review_record_id"])
+        self.assertEqual(1, update_kwargs["app_entity_id"])
         feishu_messenger.send_notifications.assert_called_once()
 
     @patch("monitor_apple.log_warning")
-    @patch("monitor_apple.parse_wiki_url", return_value=("wiki-token", "table-id", "view-id"))
-    def test_run_marks_failed_lookup_as_query_failed_not_waiting(self, _mock_parse, mock_log_warning):
+    def test_run_marks_failed_lookup_as_query_failed_not_waiting(self, mock_log_warning):
         record_failed = ApplePackageRecord(
-            record_id="record-failed",
+            record_id="103",
             package_name="Demo App Failed",
             package_status="提审中",
             version="1.0.0",
@@ -360,10 +286,8 @@ class AppleMonitorBatchLookupTests(unittest.TestCase):
             apple_id="123",
         )
 
-        feishu_service = Mock()
-        feishu_service.get_app_token_from_wiki.return_value = "app-token"
-        feishu_service.get_grouped_records.return_value = [record_failed]
-        feishu_service.update_record_fields.return_value = True
+        core_service = Mock()
+        core_service.get_review_groups.return_value = [self._root_group(record_failed, 3)]
 
         feishu_messenger = Mock()
         apple_service = Mock()
@@ -376,21 +300,18 @@ class AppleMonitorBatchLookupTests(unittest.TestCase):
         )
 
         monitor = AppleMonitor(
-            feishu_service=feishu_service,
+            core_service=core_service,
             feishu_messenger=feishu_messenger,
             apple_service=apple_service,
         )
 
         with patch.object(monitor_apple.settings, "validate", return_value=True), patch.object(
-            monitor_apple.settings, "FEISHU_WIKI_URL", "https://example.com/wiki"
-        ), patch.object(monitor_apple.settings, "FEISHU_NOTIFICATIONS", []), patch.object(
-            monitor_apple.settings, "ENABLE_RECORD_REVIEW", False
+            monitor_apple.settings, "FEISHU_NOTIFICATIONS", []
         ), patch("monitor_apple.log_info") as mock_log_info:
             monitor.run()
 
         apple_service.query_app_statuses_with_meta.assert_called_once_with(["123"], verbose=False)
-        feishu_service.test_connection.assert_not_called()
-        feishu_service.update_record_fields.assert_not_called()
+        core_service.mark_approved.assert_not_called()
         feishu_messenger.send_notifications.assert_not_called()
         self.assertTrue(
             any("Apple 状态查询失败，跳过本轮判定" in str(call.args[0]) for call in mock_log_warning.call_args_list)
@@ -399,10 +320,9 @@ class AppleMonitorBatchLookupTests(unittest.TestCase):
             any("指定版本未上线" in str(call.args[0]) for call in mock_log_info.call_args_list)
         )
 
-    @patch("monitor_apple.parse_wiki_url", return_value=("wiki-token", "table-id", "view-id"))
-    def test_run_logs_store_version_when_lookup_result_does_not_match_monitored_version(self, _mock_parse):
+    def test_run_logs_store_version_when_lookup_result_does_not_match_monitored_version(self):
         record_waiting = ApplePackageRecord(
-            record_id="record-waiting",
+            record_id="104",
             package_name="Demo App B",
             package_status="提审中",
             version="1.2.3",
@@ -410,10 +330,8 @@ class AppleMonitorBatchLookupTests(unittest.TestCase):
             apple_id="123",
         )
 
-        feishu_service = Mock()
-        feishu_service.get_app_token_from_wiki.return_value = "app-token"
-        feishu_service.get_grouped_records.return_value = [record_waiting]
-        feishu_service.update_record_fields.return_value = True
+        core_service = Mock()
+        core_service.get_review_groups.return_value = [self._root_group(record_waiting, 4)]
 
         feishu_messenger = Mock()
         apple_service = Mock()
@@ -436,15 +354,13 @@ class AppleMonitorBatchLookupTests(unittest.TestCase):
         )
 
         monitor = AppleMonitor(
-            feishu_service=feishu_service,
+            core_service=core_service,
             feishu_messenger=feishu_messenger,
             apple_service=apple_service,
         )
 
         with patch.object(monitor_apple.settings, "validate", return_value=True), patch.object(
-            monitor_apple.settings, "FEISHU_WIKI_URL", "https://example.com/wiki"
-        ), patch.object(monitor_apple.settings, "FEISHU_NOTIFICATIONS", []), patch.object(
-            monitor_apple.settings, "ENABLE_RECORD_REVIEW", False
+            monitor_apple.settings, "FEISHU_NOTIFICATIONS", []
         ), patch("monitor_apple.log_info") as mock_log_info:
             monitor.run()
 
@@ -454,7 +370,44 @@ class AppleMonitorBatchLookupTests(unittest.TestCase):
         self.assertTrue(
             any("当前监控版本" in str(call.args[0]) and "1.2.3" in str(call.args[0]) for call in mock_log_info.call_args_list)
         )
-        feishu_service.test_connection.assert_not_called()
+        core_service.mark_approved.assert_not_called()
+
+    def test_parent_child_selection_and_five_photo_rule(self):
+        parent = ApplePackageRecord(
+            record_id="app-5",
+            package_name="Parent App",
+            package_status="提审中",
+            stage="A1+A2+H5+五图",
+            apple_id="555",
+        )
+        child = ApplePackageRecord(
+            record_id="105",
+            package_name="Child App",
+            package_status="提审中",
+            version="1.0.0",
+            stage="A1+A2+H5+五图",
+            apple_id="555",
+            submission_time=1778400000000,
+        )
+        group = CoreReviewGroup(
+            app_entity_id=5,
+            parent_record=parent,
+            current_record=child,
+            submitting_children=[child],
+            has_children=True,
+        )
+        monitor = AppleMonitor(core_service=Mock(), feishu_messenger=Mock(), apple_service=Mock())
+
+        candidates = monitor.evaluate_records([group])
+
+        self.assertEqual(1, len(candidates))
+        self.assertEqual(5, candidates[0].app_entity_id)
+        self.assertEqual(105, candidates[0].review_record_id)
+        self.assertNotEqual("五图", child.stage)
+
+        child.stage = "五图"
+        candidates = monitor.evaluate_records([group])
+        self.assertEqual([], candidates)
 
 if __name__ == "__main__":
     unittest.main()

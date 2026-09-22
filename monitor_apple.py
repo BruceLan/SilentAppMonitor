@@ -4,15 +4,13 @@ Apple 应用监控主程序
 """
 from dataclasses import dataclass
 from datetime import datetime
-from typing import List, Optional, Tuple
+from typing import List
 
 from config.settings import settings
-from models.delivery import ApprovedDeliveryItem
 from models.record import ApplePackageRecord
-from services.ad_delivery_sync import AdDeliverySyncService
 from services.apple_service import AppleStoreService
+from services.core_service import CoreReviewGroup, CoreServiceClient
 from services.feishu_messenger import FeishuMessenger
-from services.feishu_service import FeishuBitableService
 from utils.logger import (
     is_github_actions,
     log_endgroup,
@@ -22,7 +20,6 @@ from utils.logger import (
     log_success,
     log_warning,
 )
-from utils.url_parser import parse_wiki_url
 
 
 @dataclass
@@ -33,6 +30,8 @@ class MonitorCandidate:
     current_record: ApplePackageRecord
     apple_id: str
     version: str
+    app_entity_id: int
+    review_record_id: int
 
 
 class AppleMonitor:
@@ -40,69 +39,32 @@ class AppleMonitor:
 
     def __init__(
         self,
-        feishu_service: FeishuBitableService,
+        core_service: CoreServiceClient,
         feishu_messenger: FeishuMessenger,
         apple_service: AppleStoreService,
-        delivery_sync_service: Optional[AdDeliverySyncService] = None,
     ):
-        self.feishu_service = feishu_service
+        self.core_service = core_service
         self.feishu_messenger = feishu_messenger
         self.apple_service = apple_service
-        self.delivery_sync_service = delivery_sync_service or AdDeliverySyncService(
-            feishu_service=feishu_service,
-        )
 
     def evaluate_records(
         self,
-        records: List[ApplePackageRecord],
-        enable_record_review: bool = False,
-    ) -> Tuple[List[MonitorCandidate], List[Tuple[ApplePackageRecord, List[str]]]]:
-        """
-        解析当前记录，并拆分出：
-        1. 可选的项目管理记录审查问题
-        2. Apple 上线监控候选
-        """
+        records: List[CoreReviewGroup],
+    ) -> List[MonitorCandidate]:
+        """解析当前记录，生成 Apple 上线监控候选。"""
         monitor_candidates: List[MonitorCandidate] = []
-        review_issues: List[Tuple[ApplePackageRecord, List[str]]] = []
 
-        for record in records:
+        for group in records:
+            record = group.parent_record
             if not record.is_in_review_scope():
                 continue
 
-            current_record = record.resolve_current_submission_record()
-            if record.children and not current_record:
-                if enable_record_review:
-                    parent_review = record.review_parent_snapshot()
-                    if not parent_review["is_valid"]:
-                        review_issues.append((record, parent_review["errors"]))
-
-                    review_issues.append((record, ["父记录为提审中，但没有提审中的子记录"]))
+            current_record = group.current_record
+            if group.has_children and not current_record:
                 continue
 
             if not current_record:
                 continue
-
-            if enable_record_review and record.children:
-                parent_review = record.review_parent_snapshot(current_record)
-                if not parent_review["is_valid"]:
-                    review_issues.append((record, parent_review["errors"]))
-
-                submitting_children = record.get_submitting_children()
-                if len(submitting_children) > 1:
-                    review_issues.append(
-                        (
-                            record,
-                            [
-                                f"存在{len(submitting_children)}条提审中子记录，"
-                                f"已按提审时间和版本号选择最新记录 ({current_record.record_id})"
-                            ],
-                        )
-                    )
-
-            if enable_record_review:
-                current_review = current_record.review_current_submission()
-                if not current_review["is_valid"]:
-                    review_issues.append((current_record, current_review["errors"]))
 
             if not current_record.should_monitor_online():
                 log_info(
@@ -119,13 +81,10 @@ class AppleMonitor:
                 online_errors.append("缺少版本号，无法监控上线")
 
             if online_errors:
-                if enable_record_review:
-                    review_issues.append((current_record, online_errors))
-                else:
-                    log_warning(
-                        f"{current_record.package_name or record.package_name} - "
-                        f"跳过 Apple 上线监控: {'；'.join(online_errors)}"
-                    )
+                log_warning(
+                    f"{current_record.package_name or record.package_name} - "
+                    f"跳过 Apple 上线监控: {'；'.join(online_errors)}"
+                )
                 continue
 
             monitor_candidates.append(
@@ -134,99 +93,12 @@ class AppleMonitor:
                     current_record=current_record,
                     apple_id=str(apple_id),
                     version=current_record.version,
+                    app_entity_id=group.app_entity_id,
+                    review_record_id=int(current_record.record_id),
                 )
             )
 
-        return monitor_candidates, review_issues
-
-    def update_app_status(
-        self,
-        app_token: str,
-        table_id: str,
-        parent_record: ApplePackageRecord,
-        current_record: ApplePackageRecord,
-        current_date_timestamp: int,
-    ) -> None:
-        """
-        更新应用的飞书表格状态
-
-        - 单记录模式：更新当前记录的状态和过审时间
-        - 父子模式：更新当前子记录的状态和过审时间，再更新父记录快照状态
-        """
-        log_info("📝 更新飞书表格状态...")
-
-        if current_record.record_id != parent_record.record_id:
-            log_info(f"  更新当前子记录: {current_record.record_id} (版本: {current_record.version})")
-            child_updated = self.feishu_service.update_record_fields(
-                app_token=app_token,
-                table_id=table_id,
-                record_id=current_record.record_id,
-                fields={
-                    "包状态": "已发布",
-                    "过审时间": current_date_timestamp,
-                },
-            )
-            if not child_updated:
-                log_warning("  当前子记录更新失败，跳过父记录快照更新")
-                return
-
-            log_info(f"  更新父记录快照: {parent_record.record_id}")
-            self.feishu_service.update_record_fields(
-                app_token=app_token,
-                table_id=table_id,
-                record_id=parent_record.record_id,
-                fields={"包状态": "已发布"},
-            )
-            return
-
-        log_info(f"  更新单记录: {current_record.record_id}")
-        self.feishu_service.update_record_fields(
-            app_token=app_token,
-            table_id=table_id,
-            record_id=current_record.record_id,
-            fields={
-                "包状态": "已发布",
-                "过审时间": current_date_timestamp,
-            },
-        )
-
-    def auto_fix_parent_snapshot(
-        self,
-        app_token: str,
-        table_id: str,
-        parent_record: ApplePackageRecord,
-        current_record: Optional[ApplePackageRecord],
-    ) -> bool:
-        """
-        自动修正父记录快照：
-        - 同步阶段
-        - 同步包状态
-        - 清空提审时间
-        """
-        fields = {}
-
-        if current_record:
-            if current_record.stage is not None and parent_record.stage != current_record.stage:
-                fields["阶段"] = current_record.stage
-            if (
-                current_record.package_status is not None
-                and parent_record.package_status != current_record.package_status
-            ):
-                fields["包状态"] = current_record.package_status
-
-        if parent_record.submission_time is not None:
-            fields["提审时间"] = None
-
-        if not fields:
-            return False
-
-        log_info(f"🛠️ 自动修正父记录快照: {parent_record.record_id}")
-        return self.feishu_service.update_record_fields(
-            app_token=app_token,
-            table_id=table_id,
-            record_id=parent_record.record_id,
-            fields=fields,
-        )
+        return monitor_candidates
 
     def run(self) -> List[MonitorCandidate]:
         """
@@ -245,114 +117,34 @@ class AppleMonitor:
             log_info("请设置以下环境变量：")
             log_info("  - FEISHU_APP_ID")
             log_info("  - FEISHU_APP_SECRET")
-            log_info("  - FEISHU_WIKI_URL")
+            log_info("  - APPMGR_MONITOR_URL")
+            log_info("  - APPMGR_MONITOR_API_KEY")
+            log_info("  - APPMGR_MONITOR_TEAM_NAME")
             return []
 
-        log_group("📋 步骤 0: 解析 Wiki URL")
-        wiki_node_token, table_id, view_id = parse_wiki_url(settings.FEISHU_WIKI_URL)
-        if not wiki_node_token:
-            log_error("无法从 URL 中提取 wiki 节点 token")
-            log_endgroup()
-            return []
-
-        log_info(f"Wiki 节点 token: {wiki_node_token}")
-        log_info(f"Table ID: {table_id}")
-        log_info(f"View ID: {view_id}")
+        log_group("📊 步骤 1: 从 AppMgr 读取记录分组")
+        grouped_records = self.core_service.get_review_groups()
         log_endgroup()
 
-        log_group("🔑 步骤 1: 从知识库节点获取 app_token")
-        app_token = self.feishu_service.get_app_token_from_wiki(wiki_node_token)
-        if not app_token:
-            log_error("无法获取 app_token")
-            log_info("   请检查：")
-            log_info("   1. 应用是否有访问知识库的权限")
-            log_info("   2. wiki_node_token 是否正确")
-            log_info("   3. 节点是否是多维表格类型")
-            log_endgroup()
-            return []
-        log_endgroup()
-
-        log_group("📊 步骤 2: 读取并构建记录分组")
-        if not table_id:
-            log_error("未找到 table_id，无法继续")
-            log_endgroup()
-            return []
-
-        grouped_records = self.feishu_service.get_grouped_records(
-            app_token=app_token,
-            table_id=table_id,
-            view_id=view_id,
-        )
-        log_endgroup()
-
-        log_group("🧾 步骤 3: 解析当前记录")
-        monitor_candidates, review_issues = self.evaluate_records(
-            grouped_records,
-            enable_record_review=settings.ENABLE_RECORD_REVIEW,
-        )
-        active_review_groups = [record for record in grouped_records if record.is_in_review_scope()]
+        log_group("🧾 步骤 2: 解析当前记录")
+        monitor_candidates = self.evaluate_records(grouped_records)
+        active_review_groups = [
+            group for group in grouped_records if group.parent_record.is_in_review_scope()
+        ]
         log_info(f"当前审核中记录组: {len(active_review_groups)}")
-        if settings.ENABLE_RECORD_REVIEW:
-            log_info(f"项目管理审查告警: {len(review_issues)} 条")
-        else:
-            log_info("项目管理审查: 已关闭 (ENABLE_RECORD_REVIEW=false)")
         log_info(f"Apple 监控候选: {len(monitor_candidates)} 条")
-
-        if settings.ENABLE_RECORD_REVIEW and review_issues:
-            log_info("审查问题详情：")
-            for idx, (record, errors) in enumerate(review_issues, 1):
-                log_warning(f"  [{idx}] {record.package_name} (Record ID: {record.record_id})")
-                for error in errors:
-                    log_warning(f"      - {error}")
         log_endgroup()
 
-        if settings.ENABLE_RECORD_REVIEW and review_issues:
-            log_group("⚠️  步骤 4: 发送项目管理审查告警")
-            warning_chat_id = None
-            for config in settings.FEISHU_NOTIFICATIONS:
-                if config.get("mention_all"):
-                    warning_chat_id = config.get("chat_id")
-                    break
-
-            if warning_chat_id:
-                self.feishu_messenger.send_warning_message(
-                    chat_id=warning_chat_id,
-                    invalid_records=review_issues,
-                )
-            else:
-                log_warning("未找到配置 mention_all=True 的群聊，跳过发送告警")
-            log_endgroup()
-        elif not settings.ENABLE_RECORD_REVIEW:
-            log_group("⚠️  步骤 4: 跳过项目管理审查告警")
-            log_info("ENABLE_RECORD_REVIEW=false，未收集或发送项目管理审查告警")
-            log_endgroup()
-
-        log_group("🛠️ 步骤 4.5: 自动修正父记录快照")
-        parent_fix_count = 0
-        for record in grouped_records:
-            if not record.is_in_review_scope() or not record.children:
-                continue
-
-            current_record = record.resolve_current_submission_record()
-            if self.auto_fix_parent_snapshot(
-                app_token=app_token,
-                table_id=table_id,
-                parent_record=record,
-                current_record=current_record,
-            ):
-                parent_fix_count += 1
-
-        log_info(f"已自动修正父记录快照: {parent_fix_count} 条")
-        log_endgroup()
-
-        log_group("🍎 步骤 5: 查询 Apple Store 状态并更新")
+        log_group("🍎 步骤 3: 查询 Apple Store 状态并更新")
         log_info(f"只处理 Apple 监控候选（共 {len(monitor_candidates)} 个）")
 
-        current_timestamp = int(datetime.now().timestamp() * 1000)
+        current_datetime = datetime.now().astimezone()
+        current_timestamp = int(current_datetime.timestamp() * 1000)
         success_count = 0
         waiting_count = 0
         query_failed_count = 0
-        approved_delivery_items: List[ApprovedDeliveryItem] = []
+        update_failed_count = 0
+        dry_run_count = 0
         lookup_result = self.apple_service.query_app_statuses_with_meta(
             [candidate.apple_id for candidate in monitor_candidates],
             verbose=False,
@@ -394,13 +186,20 @@ class AppleMonitor:
                 if app_status.get("track_view_url"):
                     log_info(f"  🔗 应用链接: {app_status['track_view_url']}")
 
-                self.update_app_status(
-                    app_token=app_token,
-                    table_id=table_id,
-                    parent_record=candidate.parent_record,
-                    current_record=candidate.current_record,
-                    current_date_timestamp=current_timestamp,
+                if not settings.ENABLE_STATUS_UPDATE:
+                    log_warning("ENABLE_STATUS_UPDATE=false，仅记录上线结果，不更新 AppMgr 状态")
+                    dry_run_count += 1
+                    continue
+
+                status_updated = self.core_service.mark_approved(
+                    review_record_id=candidate.review_record_id,
+                    app_entity_id=candidate.app_entity_id,
+                    approved_at=current_datetime,
                 )
+                if not status_updated:
+                    log_warning("  AppMgr 状态更新失败，跳过飞书通知")
+                    update_failed_count += 1
+                    continue
 
                 self.feishu_messenger.send_notifications(
                     notifications=settings.FEISHU_NOTIFICATIONS,
@@ -410,14 +209,6 @@ class AppleMonitor:
                 )
                 candidate.current_record.package_status = "已发布"
                 candidate.current_record.approval_time = current_timestamp
-                approved_delivery_items.append(
-                    ApprovedDeliveryItem(
-                        parent_record=candidate.parent_record,
-                        current_record=candidate.current_record,
-                        apple_id=candidate.apple_id,
-                        app_status=app_status,
-                    )
-                )
                 success_count += 1
             else:
                 log_info(f"{candidate.parent_record.package_name} - 指定版本未上线")
@@ -437,21 +228,8 @@ class AppleMonitor:
 
         log_endgroup()
 
-        if settings.ENABLE_RECORD_REVIEW and settings.AD_DELIVERY_WIKI_URL:
-            log_group("📦 步骤 5.5: 同步可投放表")
-            synced_count = self.delivery_sync_service.sync_delivery_records(
-                approved_delivery_items,
-                settings.AD_DELIVERY_WIKI_URL,
-            )
-            log_info(f"可投放表同步完成: {synced_count} 条")
-            log_endgroup()
-
         log_group("📊 任务执行总结")
         log_info(f"总共读取主记录组: {len(grouped_records)} 个")
-        if settings.ENABLE_RECORD_REVIEW:
-            log_info(f"项目管理审查告警: {len(review_issues)} 条")
-        else:
-            log_info("项目管理审查: 已关闭")
         log_info(f"Apple 监控候选: {len(monitor_candidates)} 个")
         log_info(f"Apple 查询批次: {lookup_result.total_batches}")
         log_info(f"Apple 查询成功批次: {lookup_result.successful_batches}")
@@ -459,6 +237,8 @@ class AppleMonitor:
         log_info(f"成功上线: {success_count} 个")
         log_info(f"等待上线: {waiting_count} 个")
         log_info(f"查询失败: {query_failed_count} 个")
+        log_info(f"状态更新失败: {update_failed_count} 个")
+        log_info(f"只读命中待更新: {dry_run_count} 个")
         log_info(f"完成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         log_endgroup()
 
@@ -467,21 +247,22 @@ class AppleMonitor:
 
 def main():
     """主函数"""
-    feishu_service = FeishuBitableService(
-        app_id=settings.FEISHU_APP_ID,
-        app_secret=settings.FEISHU_APP_SECRET,
+    core_service = CoreServiceClient(
+        base_url=settings.APPMGR_MONITOR_URL,
+        api_key=settings.APPMGR_MONITOR_API_KEY,
+        team_name=settings.APPMGR_MONITOR_TEAM_NAME,
     )
 
     feishu_messenger = FeishuMessenger(
         app_id=settings.FEISHU_APP_ID,
         app_secret=settings.FEISHU_APP_SECRET,
-        message_prefix=settings.FEISHU_MESSAGE_PREFIX,
+        message_prefix=settings.APPMGR_MONITOR_TEAM_NAME,
     )
 
     apple_service = AppleStoreService()
 
     monitor = AppleMonitor(
-        feishu_service=feishu_service,
+        core_service=core_service,
         feishu_messenger=feishu_messenger,
         apple_service=apple_service,
     )
